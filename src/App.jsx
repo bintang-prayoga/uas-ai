@@ -1,37 +1,34 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import "./index.css";
 
 // Emoji legend
 const EMOJI = {
   empty: "⬜",
-  dirty: "🟫",
+  dirty: "💩",
   obstacle: "🪑",
   cleaned: "🟩",
   robot: "🤖",
 };
 
-const GRID_SIZE = 6;
+const gridSize = 6;
 
 // Generate initial grid with specified obstacles and dirty tiles
-function generateGrid(size, obstacleCount, dirtyCount) {
-  // Create all positions except (0,0)
+function generateGrid(size, obstacleCount, dirtyCountInput) {
   const positions = [];
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       if (!(x === 0 && y === 0)) positions.push({ x, y });
     }
   }
-  // Shuffle positions
   for (let i = positions.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [positions[i], positions[j]] = [positions[j], positions[i]];
   }
-  // Place obstacles
   const obstacles = positions.slice(0, obstacleCount);
-  // Place dirty tiles (excluding obstacles)
-  const dirtyTiles = positions.slice(obstacleCount).slice(0, dirtyCount);
+  const dirtyTilesFromInput = positions
+    .slice(obstacleCount)
+    .slice(0, dirtyCountInput);
 
-  // Build grid
   const grid = [];
   for (let y = 0; y < size; y++) {
     const row = [];
@@ -39,8 +36,8 @@ function generateGrid(size, obstacleCount, dirtyCount) {
       if (obstacles.some((p) => p.x === x && p.y === y)) {
         row.push("obstacle");
       } else if (
-        dirtyTiles.some((p) => p.x === x && p.y === y) ||
-        (x === 0 && y === 0 && dirtyCount > 0)
+        dirtyTilesFromInput.some((p) => p.x === x && p.y === y) ||
+        (x === 0 && y === 0 && dirtyCountInput > 0)
       ) {
         row.push("dirty");
       } else {
@@ -52,19 +49,259 @@ function generateGrid(size, obstacleCount, dirtyCount) {
   return grid;
 }
 
+function bfs(grid, start, end) {
+  const queue = [{ ...start, path: [start] }];
+  const visited = new Set();
+  visited.add(`${start.x},${start.y}`);
+  const directions = [
+    { x: 0, y: -1 },
+    { x: 0, y: 1 },
+    { x: -1, y: 0 },
+    { x: 1, y: 0 },
+  ];
+
+  while (queue.length > 0) {
+    const { x, y, path } = queue.shift();
+    if (x === end.x && y === end.y) return path;
+
+    for (const dir of directions) {
+      const nextX = x + dir.x;
+      const nextY = y + dir.y;
+      if (
+        nextX >= 0 &&
+        nextX < gridSize &&
+        nextY >= 0 &&
+        nextY < gridSize &&
+        grid[nextY][nextX] !== "obstacle" &&
+        !visited.has(`${nextX},${nextY}`)
+      ) {
+        visited.add(`${nextX},${nextY}`);
+        queue.push({
+          x: nextX,
+          y: nextY,
+          path: [...path, { x: nextX, y: nextY }],
+        });
+      }
+    }
+  }
+  return null;
+}
+
+function findOptimalPath(initialGrid, initialRobotPos) {
+  let currentGridSim = JSON.parse(JSON.stringify(initialGrid)); // Use a copy for simulation
+  let robotPosSim = { ...initialRobotPos };
+  const fullPathCoords = [{ ...robotPosSim }];
+
+  let dirtyTilesLocations = [];
+  for (let y = 0; y < gridSize; y++) {
+    for (let x = 0; x < gridSize; x++) {
+      if (currentGridSim[y][x] === "dirty") {
+        dirtyTilesLocations.push({ x, y });
+      }
+    }
+  }
+
+  if (currentGridSim[robotPosSim.y][robotPosSim.x] === "dirty") {
+    currentGridSim[robotPosSim.y][robotPosSim.x] = "cleaned";
+    dirtyTilesLocations = dirtyTilesLocations.filter(
+      (t) => !(t.x === robotPosSim.x && t.y === robotPosSim.y)
+    );
+  }
+
+  while (dirtyTilesLocations.length > 0) {
+    let closestDirtyTileInfo = null;
+    for (const targetTile of dirtyTilesLocations) {
+      const pathSegment = bfs(currentGridSim, robotPosSim, targetTile);
+      if (pathSegment) {
+        if (
+          !closestDirtyTileInfo ||
+          pathSegment.length < closestDirtyTileInfo.path.length
+        ) {
+          closestDirtyTileInfo = { tile: targetTile, path: pathSegment };
+        }
+      }
+    }
+
+    if (!closestDirtyTileInfo) {
+      console.warn("Cannot reach remaining dirty tiles.");
+      break;
+    }
+
+    for (let i = 1; i < closestDirtyTileInfo.path.length; i++) {
+      fullPathCoords.push(closestDirtyTileInfo.path[i]);
+    }
+
+    robotPosSim = { ...closestDirtyTileInfo.tile };
+    currentGridSim[robotPosSim.y][robotPosSim.x] = "cleaned";
+    dirtyTilesLocations = dirtyTilesLocations.filter(
+      (t) => !(t.x === robotPosSim.x && t.y === robotPosSim.y)
+    );
+  }
+  return fullPathCoords;
+}
+
 function App() {
   const [obstacleCount, setObstacleCount] = useState(6);
   const [dirtyCount, setDirtyCount] = useState(10);
-  const [grid, setGrid] = useState(() => generateGrid(GRID_SIZE, 6, 10));
+
+  const [grid, setGrid] = useState(() =>
+    generateGrid(gridSize, obstacleCount, dirtyCount)
+  );
   const [robotPos, setRobotPos] = useState({ x: 0, y: 0 });
 
-  // Reset grid with new parameters
-  function resetGrid() {
-    setGrid(generateGrid(GRID_SIZE, obstacleCount, dirtyCount));
+  const [isSolving, setIsSolving] = useState(false);
+  const [path, setPath] = useState([]);
+  const [pathIndex, setPathIndex] = useState(0);
+  const [message, setMessage] = useState("");
+
+  const maxObstacles = gridSize * gridSize - 2;
+  const currentMaxDirty = Math.max(0, gridSize * gridSize - 1 - obstacleCount);
+  const currentMinDirty = currentMaxDirty > 0 ? 1 : 0;
+
+  const handleObstacleChange = (e) => {
+    let newObstacleCount = Number(e.target.value);
+    newObstacleCount = Math.max(0, Math.min(newObstacleCount, maxObstacles));
+    setObstacleCount(newObstacleCount);
+
+    const newMaxDirtyForObstacles = Math.max(
+      0,
+      gridSize * gridSize - 1 - newObstacleCount
+    );
+    const newMinDirtyForObstacles = newMaxDirtyForObstacles > 0 ? 1 : 0;
+
+    if (dirtyCount > newMaxDirtyForObstacles) {
+      setDirtyCount(newMaxDirtyForObstacles);
+    } else if (
+      dirtyCount < newMinDirtyForObstacles &&
+      newMinDirtyForObstacles > 0
+    ) {
+      setDirtyCount(newMinDirtyForObstacles);
+    } else if (newMaxDirtyForObstacles === 0) {
+      setDirtyCount(0);
+    }
+  };
+
+  const handleDirtyChange = (e) => {
+    let newDirtyCount = Number(e.target.value);
+    newDirtyCount = Math.max(
+      currentMinDirty,
+      Math.min(newDirtyCount, currentMaxDirty)
+    );
+    setDirtyCount(newDirtyCount);
+  };
+
+  const resetGrid = useCallback(() => {
+    setIsSolving(false);
+    setPath([]);
+    setPathIndex(0);
+    setMessage("");
+
+    const validObstacleCount = Math.max(
+      0,
+      Math.min(obstacleCount, maxObstacles)
+    );
+    const maxDirtyForValidObstacles = Math.max(
+      0,
+      gridSize * gridSize - 1 - validObstacleCount
+    );
+    const minDirtyForValidObstacles = maxDirtyForValidObstacles > 0 ? 1 : 0;
+    const validDirtyCount = Math.max(
+      minDirtyForValidObstacles,
+      Math.min(dirtyCount, maxDirtyForValidObstacles)
+    );
+
+    setGrid(generateGrid(gridSize, validObstacleCount, validDirtyCount));
     setRobotPos({ x: 0, y: 0 });
+  }, [obstacleCount, dirtyCount, maxObstacles]);
+
+  // ***** CORRECTED handleSolve *****
+  function handleSolve() {
+    if (isSolving) return;
+
+    setMessage("Calculating path...");
+
+    // Visually reset robot to (0,0) for the start of the solving animation.
+    // Pathfinding will also assume the robot starts at (0,0) on the *current* grid.
+    setRobotPos({ x: 0, y: 0 });
+
+    // Use a short delay to allow the robot position to update visually (if needed)
+    // and ensure we are working with the grid state that the user sees.
+    setTimeout(() => {
+      // Pass the *current* grid state (from React state) to findOptimalPath.
+      // findOptimalPath makes an internal copy, so the 'grid' state passed here is safe from direct mutation by it.
+      const calculatedPath = findOptimalPath(grid, { x: 0, y: 0 });
+
+      if (calculatedPath && calculatedPath.length > 0) {
+        setPath(calculatedPath);
+        setPathIndex(0);
+        setIsSolving(true);
+        setMessage("Solving... 🤖");
+
+        // If the robot starts on a dirty tile at (0,0) on the *current* grid,
+        // update the visual grid state immediately for this first step.
+        // The animation `useEffect` will also handle cleaning as the robot moves.
+        if (grid[0][0] === "dirty") {
+          setGrid((prevGridState) => {
+            // Create a new grid array for React state update
+            const newGridVisual = prevGridState.map((row) => [...row]);
+            if (newGridVisual[0][0] === "dirty") {
+              // Ensure it's still dirty before cleaning
+              newGridVisual[0][0] = "cleaned";
+            }
+            return newGridVisual;
+          });
+        }
+      } else {
+        // Check the number of dirty tiles on the *current* grid.
+        const totalDirtyInCurrentGrid = grid
+          .flat()
+          .filter((cell) => cell === "dirty").length;
+        if (totalDirtyInCurrentGrid === 0) {
+          setMessage("Already clean! ✅");
+        } else {
+          setMessage("No path found or no dirty tiles reachable. 🚫");
+        }
+      }
+    }, 50); // Small delay for visual updates and to ensure we use fresh state if needed.
   }
 
-  // Render grid with emojis
+  useEffect(() => {
+    if (!isSolving || pathIndex >= path.length) {
+      if (isSolving && path.length > 0) {
+        const remainingDirty = grid
+          .flat()
+          .filter((cell) => cell === "dirty").length;
+        if (remainingDirty === 0) {
+          setMessage("Solved! All dirty tiles cleaned. 🎉");
+        } else {
+          setMessage(
+            `Path finished, but ${remainingDirty} dirty tile(s) remain. 😕`
+          );
+        }
+        setIsSolving(false);
+      }
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      const nextPos = path[pathIndex];
+      setRobotPos(nextPos); // Update robot's visual position
+
+      // Update the grid: if the robot moves to a dirty tile, clean it.
+      setGrid((prevGrid) => {
+        const newGrid = prevGrid.map((row) => [...row]);
+        if (newGrid[nextPos.y][nextPos.x] === "dirty") {
+          newGrid[nextPos.y][nextPos.x] = "cleaned";
+        }
+        return newGrid;
+      });
+
+      setPathIndex((prev) => prev + 1);
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [isSolving, pathIndex, path, grid]); // Added grid to dependency array for useEffect consistency
+
   function renderGrid() {
     return (
       <div
@@ -95,52 +332,80 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-100 to-green-100">
-      <h2 className="text-2xl font-bold mb-4 text-gray-700">
-        Smart Vacuum Cleaner Simulator
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-100 to-green-100 p-4">
+      <h2 className="text-3xl font-bold mb-6 text-gray-700">
+        Smart Vacuum Cleaner Simulator 🤖
       </h2>
-      <div className="flex gap-4 mb-4">
-        <label>
-          Obstacles:{" "}
+      <div className="flex flex-wrap justify-center gap-4 mb-6 items-center">
+        <label className="flex flex-col items-center">
+          <span className="text-sm font-medium text-gray-600 mb-1">
+            Obstacles
+          </span>
           <input
             type="number"
             min={0}
-            max={GRID_SIZE * GRID_SIZE - 2}
+            max={maxObstacles}
             value={obstacleCount}
-            onChange={(e) => setObstacleCount(Number(e.target.value))}
-            className="w-16 px-2 py-1 border rounded"
+            onChange={handleObstacleChange}
+            disabled={isSolving}
+            className="w-20 px-2 py-1 border rounded text-center"
           />
         </label>
-        <label>
-          Dirty Tiles:{" "}
+        <label className="flex flex-col items-center">
+          <span className="text-sm font-medium text-gray-600 mb-1">
+            Dirty Tiles
+          </span>
           <input
             type="number"
-            min={1}
-            max={GRID_SIZE * GRID_SIZE - 1 - obstacleCount}
+            min={currentMinDirty}
+            max={currentMaxDirty}
             value={dirtyCount}
-            onChange={(e) => setDirtyCount(Number(e.target.value))}
-            className="w-16 px-2 py-1 border rounded"
+            onChange={handleDirtyChange}
+            disabled={isSolving || currentMaxDirty === 0}
+            className="w-20 px-2 py-1 border rounded text-center"
           />
         </label>
         <button
           onClick={resetGrid}
-          className="px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white font-semibold rounded shadow transition"
+          disabled={isSolving}
+          className="px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white font-semibold rounded shadow transition disabled:opacity-50"
         >
           Reset Grid
         </button>
       </div>
       {renderGrid()}
+      {message && (
+        <p
+          className={`mt-4 text-lg font-semibold ${
+            message.includes("🎉") || message.includes("✅")
+              ? "text-green-600"
+              : message.includes("🚫") || message.includes("😕")
+              ? "text-red-600"
+              : "text-blue-600"
+          }`}
+        >
+          {message}
+        </p>
+      )}
       <div className="mt-6 flex flex-wrap gap-4 text-lg">
-        <button className="bg-green-500 px-4 py-2 text-white font-semibold rounded shadow transition cursor-pointer" onClick={() => {}}>
-          Solve
+        <button
+          onClick={handleSolve}
+          disabled={isSolving || (currentMaxDirty === 0 && dirtyCount === 0)}
+          className={`px-6 py-3 text-white font-semibold rounded shadow transition ${
+            isSolving || (currentMaxDirty === 0 && dirtyCount === 0)
+              ? "bg-gray-400 cursor-not-allowed"
+              : "bg-green-500 hover:bg-green-600 cursor-pointer"
+          }`}
+        >
+          {isSolving ? "Solving..." : "Solve ✨"}
         </button>
       </div>
-      <div className="mt-6 flex flex-wrap gap-4 text-lg">
+      <div className="mt-8 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-x-6 gap-y-3 text-md">
         <span>
           {EMOJI.robot} <span className="text-gray-600">= Robot</span>
         </span>
         <span>
-          {EMOJI.obstacle} <span className="text-gray-600">= Furniture</span>
+          {EMOJI.obstacle} <span className="text-gray-600">= Obstacle</span>
         </span>
         <span>
           {EMOJI.cleaned} <span className="text-gray-600">= Cleaned</span>
