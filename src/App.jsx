@@ -12,7 +12,7 @@ const EMOJI = {
 
 const gridSize = 6;
 
-// Generate initial grid with specified obstacles and dirty tiles
+// Initial Grid
 function generateGrid(size, obstacleCount, dirtyCountInput) {
   const positions = [];
   for (let y = 0; y < size; y++) {
@@ -214,21 +214,12 @@ function App() {
     setRobotPos({ x: 0, y: 0 });
   }, [obstacleCount, dirtyCount, maxObstacles]);
 
-  // ***** CORRECTED handleSolve *****
   function handleSolve() {
     if (isSolving) return;
 
     setMessage("Calculating path...");
-
-    // Visually reset robot to (0,0) for the start of the solving animation.
-    // Pathfinding will also assume the robot starts at (0,0) on the *current* grid.
     setRobotPos({ x: 0, y: 0 });
-
-    // Use a short delay to allow the robot position to update visually (if needed)
-    // and ensure we are working with the grid state that the user sees.
     setTimeout(() => {
-      // Pass the *current* grid state (from React state) to findOptimalPath.
-      // findOptimalPath makes an internal copy, so the 'grid' state passed here is safe from direct mutation by it.
       const calculatedPath = findOptimalPath(grid, { x: 0, y: 0 });
 
       if (calculatedPath && calculatedPath.length > 0) {
@@ -237,22 +228,16 @@ function App() {
         setIsSolving(true);
         setMessage("Solving... 🤖");
 
-        // If the robot starts on a dirty tile at (0,0) on the *current* grid,
-        // update the visual grid state immediately for this first step.
-        // The animation `useEffect` will also handle cleaning as the robot moves.
         if (grid[0][0] === "dirty") {
           setGrid((prevGridState) => {
-            // Create a new grid array for React state update
             const newGridVisual = prevGridState.map((row) => [...row]);
             if (newGridVisual[0][0] === "dirty") {
-              // Ensure it's still dirty before cleaning
               newGridVisual[0][0] = "cleaned";
             }
             return newGridVisual;
           });
         }
       } else {
-        // Check the number of dirty tiles on the *current* grid.
         const totalDirtyInCurrentGrid = grid
           .flat()
           .filter((cell) => cell === "dirty").length;
@@ -262,7 +247,7 @@ function App() {
           setMessage("No path found or no dirty tiles reachable. 🚫");
         }
       }
-    }, 50); // Small delay for visual updates and to ensure we use fresh state if needed.
+    }, 50);
   }
 
   useEffect(() => {
@@ -285,9 +270,8 @@ function App() {
 
     const timer = setTimeout(() => {
       const nextPos = path[pathIndex];
-      setRobotPos(nextPos); // Update robot's visual position
+      setRobotPos(nextPos);
 
-      // Update the grid: if the robot moves to a dirty tile, clean it.
       setGrid((prevGrid) => {
         const newGrid = prevGrid.map((row) => [...row]);
         if (newGrid[nextPos.y][nextPos.x] === "dirty") {
@@ -300,7 +284,7 @@ function App() {
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [isSolving, pathIndex, path, grid]); // Added grid to dependency array for useEffect consistency
+  }, [isSolving, pathIndex, path, grid]);
 
   function renderGrid() {
     return (
@@ -334,7 +318,7 @@ function App() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-100 to-green-100 p-4">
       <h2 className="text-3xl font-bold mb-6 text-gray-700">
-        Smart Vacuum Cleaner Simulator 🤖
+        Roomba Simulator 🤖
       </h2>
       <div className="flex flex-wrap justify-center gap-4 mb-6 items-center">
         <label className="flex flex-col items-center">
@@ -402,7 +386,7 @@ function App() {
       </div>
       <div className="mt-8 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-x-6 gap-y-3 text-md">
         <span>
-          {EMOJI.robot} <span className="text-gray-600">= Robot</span>
+          {EMOJI.robot} <span className="text-gray-600">= Roomba</span>
         </span>
         <span>
           {EMOJI.obstacle} <span className="text-gray-600">= Obstacle</span>
